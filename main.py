@@ -1,11 +1,11 @@
 import math
 import pygame
 
-FPS = 120
+FPS = 60
 
 pygame.init()
 
-c = 1
+c = 0.5
 
 acceleration = 0.002 * c
 
@@ -14,11 +14,10 @@ SPF = 1/FPS
 relativity = True
 relSwitchPressed = False
 
-canvas = pygame.display.set_mode((1600,1000))
-pygame.display.set_caption("Relativity Run")
-screentf = lambda p: (p[0]+800, p[1]+500)
-
-corpus = list(map(screentf, [(30,50),(0,20),(-30,50),(0,20),(0,-20),(30,20),(0,-20),(-30,20), (0,-20), (0,20)]))
+canvas = pygame.display.set_mode((1600,1000),pygame.RESIZABLE)
+pygame.display.set_caption("Relativity Simulation")
+screentf = lambda p: (p[0]+canvas.get_width()/2, p[1]+canvas.get_height()/2)
+corpus = [(30,50),(0,20),(-30,50),(0,20),(0,-20),(30,20),(0,-20),(-30,20), (0,-20), (0,20)]
 
 
 def beta(velocity):
@@ -48,42 +47,46 @@ def lTransform(velocity_x, velocity_y=None):
             m21*(f2*p[0] + f3*p[1]) + m22*p[0] + m23*p[1],
             m31*(f2*p[0] + f3*p[1]) + m32*p[0] + m33*p[1]
         ),
-        lambda p: -f2 * p[0] + f3 * p[1]
+        lambda p: f2 * p[0] + f3 * p[1]
     )
 
-"""def invLTransform(velocity_x, velocity_y=None):
-    if velocity_y is None:
-        velocity_y = velocity_x[1]
-        velocity_x = velocity_x[0]
-    bx = beta(velocity_x)
-    by = beta(velocity_y)
-    g = gamma(velocity_x, velocity_y)
-    h = g**2/(1+g)
+def twoVelLTransform(vel1, vel2):
+    bx1 = beta(vel1[0])
+    by1 = beta(vel1[1])
+    bx2 = beta(vel2[0])
+    by2 = beta(vel2[1])
+    g1 = gamma(*vel1)
+    g2 = gamma(*vel2)
+    h1 = g1**2/(1+g1)
+    h2 = g2**2/(1+g2)
 
-    m11, m12, m13 = g,          -g*bx/c,    -g*by/c
-    m21, m22, m23 = -g*bx*c,    1+h*bx*bx,    h*by*bx
-    m31, m32, m33 = -g*by*c,    h*bx*by,    1+h*by*by
+    a11, a12, a13 = g1, -g1 * bx1 / c, -g1 * by1 / c
+    a21, a22, a23 = -g1 * bx1 * c, 1 + h1 * bx1 * bx1, h1 * by1 * bx1
+    a31, a32, a33 = -g1 * by1 * c, h1 * bx1 * by1, 1 + h1 * by1 * by1
+
+    b11, b12, b13 = g2, -g2 * bx2 / c, -g2 * by2 / c
+    b21, b22, b23 = -g2 * bx2 * c, 1 + h2 * bx2 * bx2, h2 * by2 * bx2
+    b31, b32, b33 = -g2 * by2 * c, h2 * bx2 * by2, 1 + h2 * by2 * by2
+
+    m11, m12, m13 = dotProduct((a11,a21,a31),(b11,b12,b13)), dotProduct((a12,a22,a32),(b11,b12,b13)), dotProduct((a13,a23,a33),(b11,b12,b13))
+    m21, m22, m23 = dotProduct((a11,a21,a31),(b21,b22,b23)), dotProduct((a12,a22,a32),(b21,b22,b23)), dotProduct((a13,a23,a33),(b21,b22,b23))
+    m31, m32, m33 = dotProduct((a11,a21,a31),(b31,b32,b33)), dotProduct((a12,a22,a32),(b31,b32,b33)), dotProduct((a13,a23,a33),(b31,b32,b33))
 
     f1, f2, f3 = 1/m11, -m12/m11, -m13/m11
 
-    a = m21*f2 + m22
-    b = m21*f3 + m23
-    e = m31*f2 + m32
-    d = m31*f3 + m33
-
-    invdet = 1/(a*d - b*e)
-
-    return lambda p: (
-        invdet*(d*p[0] - b*p[1]),
-        invdet*(-e*p[0] + a*p[1])
+    return (
+        lambda p: (
+            m21*(f2*p[0] + f3*p[1]) + m22*p[0] + m23*p[1],
+            m31*(f2*p[0] + f3*p[1]) + m32*p[0] + m33*p[1]
+        ),
+        lambda p: f2 * p[0] + f3 * p[1]
     )
-"""
 
 def posTransform(pos):
     return lambda p: (p[0]+pos[0], p[1]+pos[1])
 
 def dotProduct(p1, p2):
-    return p1[0]*p2[0] + p1[1]*p2[1]
+    return sum(map(lambda x, y: x*y, p1, p2))
 
 def vecMul(a, vec):
     return a*vec[0], a*vec[1]
@@ -136,28 +139,20 @@ class InertialSystem:
     def drawAndUpdate(self, canvas, vel, dt_prime):
         postf = posTransform(self.pos)
 
-        vel = addVel(vecMul(-1,self.vel), vel) if relativity else vecAdd(vecMul(-1,self.vel),vel)
+
 
         if relativity:
-            ltf, tLTF = lTransform(vel)
-            lorentzFactor = gamma(vel[0], vel[1])
-            dt = dt_prime*lorentzFactor
-        else:
-            dt = dt_prime
-
-        self.pos = self.pos[0] + vel[0] * dt, self.pos[1] + vel[1] * dt
-        self.t += dt
-
-        '''
-        if relativity:
-            ltf1, tLTF1 = lTransform(vel)
-            ltf2, tLTF2 = lTransform(self.vel)
-            ltf, tLTF = lambda X: ltf1(ltf2), tLTF1(tLTF2)
-            lorentzFactor = gamma(vel[0], vel[1])
+            summedVel = addVel(vecMul(-1,self.vel), vel)
+            ltf, tLTF = twoVelLTransform(vecMul(-1,self.vel), vel)
+            lorentzFactor = gamma(*summedVel)
             dt = dt_prime * lorentzFactor
         else:
+            summedVel = vecAdd(vecMul(-1,self.vel), vel)
             dt = dt_prime
-        '''
+
+        self.pos = self.pos[0] + summedVel[0] * dt, self.pos[1] + summedVel[1] * dt
+        self.t += dt
+
 
         transformedObstacles = map(lambda o: list(map(lambda p: screentf(ltf(postf(p))), o)), self.obstacles) if relativity else map(lambda o: list(map(lambda p: screentf(postf(p)), o)), self.obstacles)
 
@@ -167,10 +162,10 @@ class InertialSystem:
         transformedRadioLamps = map(lambda p: screentf(ltf(postf(p))), self.radio_lamps) if relativity else map(
             lambda p: screentf(postf(p)), self.radio_lamps)
         transformedLampTime = list(
-            map(lambda p: self.t + tLTF(postf(p)), self.radio_lamps) if relativity else [self.t] * len(self.radio_lamps))
+            map(lambda p: self.t - tLTF(postf(p)), self.radio_lamps) if relativity else [self.t] * len(self.radio_lamps))
 
         for rl, rlt in zip(transformedRadioLamps, transformedLampTime):
-            pygame.draw.circle(canvas, hslToRgb(-rlt / 5000 - int(-rlt / 5000) + 1, 0.5, 0.5), rl, 10)
+            pygame.draw.circle(canvas, hslToRgb(-rlt / 10000 - int(-rlt / 10000) + 1, 0.5, 0.5), rl, 10)
 
 fixedObstacles = [
     [(900,0), (950, -50), (950, -100), (850, -100), (950, -130), (875, -130), (950, -160), (900, -160), (950, -190), (925, -190),(1002, -250),(1075, -190), (1050, -190), (1100, -160), (1050,-160), (1125, -130), (1050, -130),(1150,-100),(1050,-100),(1050,-50),(1100,0)]
@@ -205,7 +200,7 @@ while not end:
 
     canvas.fill((255,255,255))
 
-    pygame.draw.polygon(canvas, (0, 0, 0), corpus, 5)
+    pygame.draw.polygon(canvas, (0, 0, 0), list(map(screentf, corpus)), 5)
     pygame.draw.circle(canvas, (0, 0, 0), screentf((0,-40)), 20, 5)
 
     for event in pygame.event.get():
