@@ -5,7 +5,7 @@ FPS = 60
 
 pygame.init()
 
-c = 0.5
+c = 1
 
 acceleration = 0.002 * c
 
@@ -17,6 +17,7 @@ relSwitchPressed = False
 canvas = pygame.display.set_mode((1600,1000),pygame.RESIZABLE)
 pygame.display.set_caption("Relativity Simulation")
 screentf = lambda p: (p[0]+canvas.get_width()/2, p[1]+canvas.get_height()/2)
+invScreentf = lambda p: (p[0]-canvas.get_width()/2, p[1]-canvas.get_height()/2)
 corpus = [(30,50),(0,20),(-30,50),(0,20),(0,-20),(30,20),(0,-20),(-30,20), (0,-20), (0,20)]
 
 
@@ -27,10 +28,7 @@ def gamma(velocity_x, velocity_y):
     return 1/math.sqrt(1-(velocity_x**2 + velocity_y**2)/c**2)
 
 # The returned linear maps map x, y -> x', y' and x, y -> Delta t (both under the assumption t' = 0)
-def lTransform(velocity_x, velocity_y=None):
-    if velocity_y is None:
-        velocity_y = velocity_x[1]
-        velocity_x = velocity_x[0]
+def lTransform(velocity_x, velocity_y):
     bx = beta(velocity_x)
     by = beta(velocity_y)
     g = gamma(velocity_x, velocity_y)
@@ -47,7 +45,7 @@ def lTransform(velocity_x, velocity_y=None):
             m21*(f2*p[0] + f3*p[1]) + m22*p[0] + m23*p[1],
             m31*(f2*p[0] + f3*p[1]) + m32*p[0] + m33*p[1]
         ),
-        lambda p: f2 * p[0] + f3 * p[1]
+        lambda p: -f2 * p[0] - f3 * p[1]
     )
 
 def twoVelLTransform(vel1, vel2):
@@ -79,8 +77,20 @@ def twoVelLTransform(vel1, vel2):
             m21*(f2*p[0] + f3*p[1]) + m22*p[0] + m23*p[1],
             m31*(f2*p[0] + f3*p[1]) + m32*p[0] + m33*p[1]
         ),
-        lambda p: f2 * p[0] + f3 * p[1]
+        lambda p: - f2 * p[0] - f3 * p[1]
     )
+
+def standardLorentzTransform(velocity_x, velocity_y):
+    bx = beta(velocity_x)
+    by = beta(velocity_y)
+    g = gamma(velocity_x, velocity_y)
+    h = g**2/(1+g)
+
+    m11, m12, m13 = g,          -g*bx/c,    -g*by/c
+    m21, m22, m23 = -g*bx*c,    1+h*bx*bx,    h*by*bx
+    m31, m32, m33 = -g*by*c,    h*bx*by,    1+h*by*by
+
+    return lambda time,p: (m11*time + m12*p[0] + m13*p[1], (m21*time + m22*p[0] + m23*p[1], m31*time + m32*p[0] + m33*p[1]))
 
 def posTransform(pos):
     return lambda p: (p[0]+pos[0], p[1]+pos[1])
@@ -139,8 +149,6 @@ class InertialSystem:
     def drawAndUpdate(self, canvas, vel, dt_prime):
         postf = posTransform(self.pos)
 
-
-
         if relativity:
             summedVel = addVel(vecMul(-1,self.vel), vel)
             ltf, tLTF = twoVelLTransform(vecMul(-1,self.vel), vel)
@@ -162,7 +170,7 @@ class InertialSystem:
         transformedRadioLamps = map(lambda p: screentf(ltf(postf(p))), self.radio_lamps) if relativity else map(
             lambda p: screentf(postf(p)), self.radio_lamps)
         transformedLampTime = list(
-            map(lambda p: self.t - tLTF(postf(p)), self.radio_lamps) if relativity else [self.t] * len(self.radio_lamps))
+            map(lambda p: self.t + tLTF(postf(p)), self.radio_lamps) if relativity else [self.t] * len(self.radio_lamps))
 
         for rl, rlt in zip(transformedRadioLamps, transformedLampTime):
             pygame.draw.circle(canvas, hslToRgb(-rlt / 10000 - int(-rlt / 10000) + 1, 0.5, 0.5), rl, 10)
@@ -176,6 +184,8 @@ fixedRadio_lamps = list(zip(range(-200, -40000, -200),[0]*len(list(range(-200, -
 rocketDistance = 1000
 rocketCount = 1000
 
+# The first one has to have vel = (0,0). This is the system of the laboratory
+# The friction is applied w.r.t. this system
 inSysts = [
     InertialSystem((0,0), fixedObstacles, fixedRadio_lamps),
     InertialSystem((-0.8*c,0),
@@ -186,6 +196,7 @@ inSysts = [
                    (0,0,255))
 ]
 
+sphericalWaves = []
 
 font = pygame.font.Font(None, 50)
 
@@ -203,9 +214,13 @@ while not end:
     pygame.draw.polygon(canvas, (0, 0, 0), list(map(screentf, corpus)), 5)
     pygame.draw.circle(canvas, (0, 0, 0), screentf((0,-40)), 20, 5)
 
+    stdInvLTF = standardLorentzTransform(*vecMul(1,vel))
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             end = True
+        elif event.type == pygame.MOUSEBUTTONDOWN and (event.button == 1 or event.button == 3):
+            sphericalWaves.append(stdInvLTF(t, invScreentf(event.pos)))
 
     keys = pygame.key.get_pressed()
 
@@ -227,12 +242,21 @@ while not end:
         if keys[pygame.K_LCTRL]: dvel = vecMul(10, dvel)
         if keys[pygame.K_LSHIFT]: dvel = vecMul(0.1, dvel)
 
+    oldVel = vel
     vel = vecMul(0.9+0.095*(lenDVel!=0), addVel(vel, dvel))
 
     t += dt
 
     for inSys in inSysts:
         inSys.drawAndUpdate(canvas, vel, dt)
+
+    stdLTF = standardLorentzTransform(*vecMul(-1,vel))
+
+    laboratorySystemPosTF = posTransform(vecMul(0, inSysts[0].pos))
+
+    for swT, swP in map(lambda x: stdLTF(*x), map(lambda x: (x[0]-inSysts[0].t, laboratorySystemPosTF(x[1])), sphericalWaves)):
+        pygame.draw.circle(canvas, (255, 255, 0), screentf(vecMul(1,swP)), -c*swT, 5)
+
 
     text = font.render(f'v = 0.{int(1000*math.sqrt(vel[0]**2 + vel[1]**2)/c)}c     t = {int(inSysts[0].t//1000)}s     t\' = {int(t//1000)}s', True, (0, 200, 200))
     textRect = text.get_rect()
